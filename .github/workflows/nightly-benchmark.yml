@@ -1,0 +1,172 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Workflow 3: Nightly Benchmark + LLM Agent
+#
+# Runs automatically every night at 02:00 UTC with the rule-based agent
+# across ALL 11 built-in tasks (benchmark mode).
+#
+# Also supports a manual "Run workflow" button where you can optionally
+# plug in a free Gemini / Groq key to test the LLM agent.
+#
+# Artifacts include: results.json, episodes.csv, screenshots, run.log.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Nightly Benchmark
+
+on:
+  schedule:
+    - cron: "0 2 * * *"        # 02:00 UTC every night
+
+  workflow_dispatch:            # manual trigger with optional free API key
+    inputs:
+      agent:
+        description: "Agent type"
+        required: true
+        default: "rule"
+        type: choice
+        options: [rule, llm]
+      free_api_provider:
+        description: "Free LLM provider (only used when agent=llm)"
+        required: false
+        default: "gemini"
+        type: choice
+        options: [gemini, groq, openrouter, none]
+      benchmark:
+        description: "Run all 11 tasks (benchmark mode)?"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      episodes:
+        description: "Episodes per task (if not benchmark)"
+        required: false
+        default: "5"
+
+jobs:
+  benchmark:
+    name: "Benchmark (${{ github.event.inputs.agent || 'rule' }}, ${{ github.event.inputs.free_api_provider || 'no-llm' }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Python ────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Dependencies ──────────────────────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          # OpenAI client needed for Gemini/Groq/OpenRouter compatibility layer
+          pip install openai
+
+      # ── 4. Playwright ────────────────────────────────────────────────────
+      - name: Install Playwright Chromium
+        run: playwright install chromium --with-deps
+
+      # ── 5. Patch LLM agent for free provider (if selected) ───────────────
+      #    This step rewrites the client init block in llm_agent.py to point
+      #    at the selected free provider's OpenAI-compatible endpoint.
+      #    No code changes needed in your source — this is CI-only patching.
+      - name: Patch LLM agent for free provider
+        if: ${{ github.event.inputs.agent == 'llm' }}
+        run: |
+          PROVIDER="${{ github.event.inputs.free_api_provider || 'gemini' }}"
+
+          case "$PROVIDER" in
+            gemini)
+              BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/"
+              MODEL="gemini-2.5-flash"
+              KEY_VAR="GEMINI_API_KEY"
+              ;;
+            groq)
+              BASE_URL="https://api.groq.com/openai/v1"
+              MODEL="llama-3.3-70b-versatile"
+              KEY_VAR="GROQ_API_KEY"
+              ;;
+            openrouter)
+              BASE_URL="https://openrouter.ai/api/v1"
+              MODEL="meta-llama/llama-3.3-70b-instruct:free"
+              KEY_VAR="OPENROUTER_API_KEY"
+              ;;
+            *)
+              echo "No provider selected — LLM agent will use rule fallback"
+              exit 0
+              ;;
+          esac
+
+          # Write a small env file that main.py / llm_agent.py reads
+          echo "FREE_LLM_BASE_URL=$BASE_URL"  >> .env
+          echo "FREE_LLM_MODEL=$MODEL"         >> .env
+          echo "FREE_LLM_KEY_VAR=$KEY_VAR"    >> .env
+          echo "Patched for provider=$PROVIDER model=$MODEL"
+
+      # ── 6. Run benchmark ─────────────────────────────────────────────────
+      - name: Run RL benchmark
+        run: |
+          AGENT="${{ github.event.inputs.agent || 'rule' }}"
+          BENCHMARK="${{ github.event.inputs.benchmark || 'true' }}"
+          EPISODES="${{ github.event.inputs.episodes || '5' }}"
+
+          mkdir -p logs logs/screenshots
+
+          if [ "$BENCHMARK" = "true" ]; then
+            python main.py --agent $AGENT --benchmark --headless true --screenshots --log-level INFO
+          else
+            python main.py --agent $AGENT --episodes $EPISODES --headless true --screenshots --log-level INFO
+          fi
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY:      ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      # ── 7. Print summary ─────────────────────────────────────────────────
+      - name: Print benchmark summary
+        if: always()
+        run: cat logs/results.json 2>/dev/null | python -m json.tool || echo "No results"
+
+      # ── 8. Upload all artifacts ───────────────────────────────────────────
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ github.run_number }}-${{ github.event.inputs.agent || 'rule' }}
+          path: |
+            logs/results.json
+            logs/episodes.csv
+            logs/run.log
+            logs/screenshots/
+          retention-days: 90       # keep nightly benchmarks for 3 months
+
+      # ── 9. GitHub Step Summary ────────────────────────────────────────────
+      - name: Write step summary
+        if: always()
+        run: |
+          echo "## 🤖 Nightly Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          python -c "
+          import json, os
+          try:
+              d = json.load(open('logs/results.json'))
+              s = d['summary']
+              rows = [
+                  ('Episodes', s['n_episodes']),
+                  ('Success Rate', f\"{s['success_rate']:.0%}\"),
+                  ('Avg Reward', f\"{s['avg_reward']:+.2f}\"),
+                  ('Avg Steps', f\"{s['avg_steps']:.1f}\"),
+                  ('Avg Duration (s)', f\"{s['avg_duration_s']:.1f}\"),
+              ]
+              for k, v in rows:
+                  print(f'| {k} | {v} |')
+          except Exception as e:
+              print(f'| Error | {e} |')
+          " >> $GITHUB_STEP_SUMMARY

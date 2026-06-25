@@ -1,0 +1,67 @@
+version: "3.9"
+
+# ── RL Web Automation Environment — Docker Compose ─────────────────────────
+# Usage:
+#   docker-compose up rule-agent          # rule-based, 5 episodes
+#   docker-compose up llm-agent           # LLM agent (needs ANTHROPIC_API_KEY)
+#   docker-compose up benchmark           # full benchmark, all tasks
+#   ANTHROPIC_API_KEY=sk-... docker-compose up llm-agent
+
+services:
+
+  # ── Build base image ─────────────────────────────────────────────────────
+  base:
+    build: .
+    image: rl-web-env:latest
+
+  # ── Rule-based agent ─────────────────────────────────────────────────────
+  rule-agent:
+    image: rl-web-env:latest
+    build: .
+    command: >
+      python main.py
+        --agent rule
+        --episodes 5
+        --headless true
+        --log-level INFO
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - LOG_LEVEL=INFO
+
+  # ── LLM agent (requires ANTHROPIC_API_KEY) ───────────────────────────────
+  llm-agent:
+    image: rl-web-env:latest
+    build: .
+    command: >
+      python main.py
+        --agent llm
+        --episodes 5
+        --headless true
+        --log-level INFO
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LOG_LEVEL=INFO
+
+  # ── Full benchmark ────────────────────────────────────────────────────────
+  benchmark:
+    image: rl-web-env:latest
+    build: .
+    command: >
+      python main.py
+        --agent rule
+        --benchmark
+        --headless true
+        --log-level INFO
+    volumes:
+      - ./logs:/app/logs
+
+  # ── Test runner ───────────────────────────────────────────────────────────
+  tests:
+    image: rl-web-env:latest
+    build: .
+    command: pytest tests/test_env.py -v
+    volumes:
+      - ./logs:/app/logs

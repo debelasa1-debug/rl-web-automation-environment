@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Workflow 1: Unit Tests
+# Runs all 52 unit + integration tests WITHOUT a live browser.
+# Triggers on every push and pull request.
+# Typical runtime: ~60 seconds.
+# Free on GitHub Actions (2 000 min/month for public repos, unlimited).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Unit Tests
+
+on:
+  push:
+    branches: ["**"]          # every branch
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  unit-tests:
+    name: "Unit Tests (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ──────────────────────────────────────────────────
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      # ── 3. Install dependencies (no Playwright browser needed) ───────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gymnasium pydantic loguru beautifulsoup4 lxml \
+                      python-dotenv anthropic pytest pytest-asyncio rich
+
+      # ── 4. Run the tests ─────────────────────────────────────────────────
+      - name: Run unit + integration tests
+        run: |
+          python -m pytest tests/ -v --tb=short --asyncio-mode=auto
+        env:
+          # No real API key needed — LLM agent falls back to rule-based
+          ANTHROPIC_API_KEY: ""
+
+      # ── 5. Upload test results on failure ────────────────────────────────
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-py${{ matrix.python-version }}
+          path: logs/
+          retention-days: 7
