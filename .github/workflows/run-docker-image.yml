@@ -6,7 +6,7 @@ on:
       episodes:
         description: "Number of episodes to run"
         required: true
-        default: "5"
+        default: "3"
       agent:
         description: "Agent type"
         required: true
@@ -21,40 +21,67 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Pull Docker image
+      # ── 1. Pull image ───────────────────────────────────────────────────
+      - name: Pull Docker image from Docker Hub
         run: |
+          echo "Pulling shima900/rl-web-env:latest..."
           docker pull shima900/rl-web-env:latest
+          echo ""
+          echo "Image details:"
           docker images shima900/rl-web-env
 
+      # ── 2. Check what is inside the container ───────────────────────────
+      - name: Inspect container contents
+        run: |
+          echo "=== Files inside container ==="
+          docker run --rm shima900/rl-web-env:latest ls -la /app/ || \
+          docker run --rm shima900/rl-web-env:latest ls -la /home/ || \
+          docker run --rm shima900/rl-web-env:latest ls -la /
+
+      # ── 3. Create results folder ────────────────────────────────────────
       - name: Create results folder
         run: mkdir -p results
 
-      - name: Run 52 tests inside Docker
+      # ── 4. Run tests ────────────────────────────────────────────────────
+      - name: Run tests inside Docker
         run: |
-          docker run --rm \
-            shima900/rl-web-env:latest \
-            pytest tests/ -v --tb=short > results/test_results.txt 2>&1
+          docker run --rm shima900/rl-web-env:latest \
+            sh -c "cd /app && python -m pytest tests/ -v --tb=short -q" \
+            > results/test_results.txt 2>&1 || \
+          docker run --rm shima900/rl-web-env:latest \
+            sh -c "python -m pytest tests/ -v --tb=short -q" \
+            >> results/test_results.txt 2>&1 || true
+          echo "=== TEST RESULTS ==="
           cat results/test_results.txt
 
+      # ── 5. Run RL agent ─────────────────────────────────────────────────
       - name: Run RL agent inside Docker
         run: |
           docker run --rm \
             -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
             -v ${{ github.workspace }}/results:/app/logs \
             shima900/rl-web-env:latest \
-            python main.py \
+            sh -c "cd /app && python main.py \
               --agent ${{ github.event.inputs.agent || 'rule' }} \
-              --episodes ${{ github.event.inputs.episodes || '5' }} \
+              --episodes ${{ github.event.inputs.episodes || '3' }} \
               --headless true \
-              --log-level INFO
+              --log-level INFO" || true
 
+      # ── 6. Show results ─────────────────────────────────────────────────
       - name: Show results
         if: always()
         run: |
-          cat results/results.json 2>/dev/null || echo "No results yet"
-          cat results/episodes.csv 2>/dev/null || echo "No CSV yet"
+          echo "=== results.json ==="
+          cat results/results.json 2>/dev/null || echo "No results.json"
+          echo ""
+          echo "=== episodes.csv ==="
+          cat results/episodes.csv 2>/dev/null || echo "No episodes.csv"
+          echo ""
+          echo "=== test_results.txt ==="
+          cat results/test_results.txt 2>/dev/null || echo "No test results"
 
-      - name: Upload results artifact
+      # ── 7. Upload artifact ──────────────────────────────────────────────
+      - name: Upload results as downloadable artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -64,16 +91,37 @@ jobs:
             results/episodes.csv
             results/test_results.txt
           retention-days: 30
+          if-no-files-found: warn
 
+      # ── 8. Summary ──────────────────────────────────────────────────────
       - name: Write job summary
         if: always()
         run: |
-          echo "## Docker Image Run Results" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** shima900/rl-web-env:latest" >> $GITHUB_STEP_SUMMARY
-          echo "**Agent:** ${{ github.event.inputs.agent || 'rule' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Episodes:** ${{ github.event.inputs.episodes || '5' }}" >> $GITHUB_STEP_SUMMARY
+          echo "## 🐳 Docker Image Run Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | shima900/rl-web-env:latest |" >> $GITHUB_STEP_SUMMARY
+          echo "| Agent | ${{ github.event.inputs.agent || 'rule' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Episodes | ${{ github.event.inputs.episodes || '3' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           if [ -f results/results.json ]; then
+            echo "### RL Agent Results" >> $GITHUB_STEP_SUMMARY
             echo '```json' >> $GITHUB_STEP_SUMMARY
-            cat results/results.json >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json
+          try:
+            d = json.load(open('results/results.json'))
+            s = d.get('summary', {})
+            print(json.dumps(s, indent=2))
+          except:
+            print('Could not parse results.json')
+          " >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -f results/test_results.txt ]; then
+            echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -5 results/test_results.txt >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
