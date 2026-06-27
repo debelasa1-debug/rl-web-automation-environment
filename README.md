@@ -275,15 +275,39 @@ Results are saved to `logs/`:
 ╔══════════════════════════════════════════════════════╗
 ║         RL WEB AUTOMATION — EVALUATION SUMMARY       ║
 ╚══════════════════════════════════════════════════════╝
-  Agent        : rule_based
-  Episodes     : 10
-  Success Rate : 70.0%
-  Avg Reward   : +5.40  (σ=3.21)
-  Avg Steps    : 8.2     (σ=2.8)
-  ...
-```
+Agent        : rule_based
+  Episodes     : 5
+  Success Rate : 80.0%
+  Avg Reward   : +8.00  (σ=7.45)
+  Avg Steps    : 4.0     (σ=4.64)
+  Avg Duration : 18.2s
 
----
+  ── By Category ──
+  multi_step          : success=100%  avg_reward=+14.0  n=1
+  navigation          : success=100%  avg_reward=+10.5  n=2
+  search              : success=50%  avg_reward=+2.5  n=2
+
+  ── By Difficulty ──
+  easy        : success=67%  n=3
+  hard        : success=100%  n=1
+  medium      : success=100%  n=1
+
+  ── Per Task ──
+  multi_002      : success=100%  avg_reward=+14.0  avg_steps=4  n=1
+  nav_001        : success=100%  avg_reward=+10.0  avg_steps=1  n=1
+  nav_002        : success=100%  avg_reward=+11.0  avg_steps=2  n=1
+  search_001     : success=0%  avg_reward=-5.0  avg_steps=12  n=1
+  search_002     : success=100%  avg_reward=+10.0  avg_steps=1  n=1
+
+11:12:32 | INFO     | eval.evaluator:237 – CSV saved → logs\episodes.csv
+11:12:32 | INFO     | __main__:287 – Results saved:
+11:12:32 | INFO     | __main__:288 –   JSON: logs\results.json
+11:12:32 | INFO     | __main__:289 –   CSV : logs\episodes.csv
+11:12:36 | INFO     | browser.playwright_browser:97 – Browser stopped
+11:12:36 | INFO     | env.web_env:137 – WebAutomationEnv closed
+
+Process finished with exit code 0
+
 
 ## Running Tests
 
