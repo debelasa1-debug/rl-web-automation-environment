@@ -1,0 +1,79 @@
+name: Run Docker Image & Download Results
+
+on:
+  workflow_dispatch:
+    inputs:
+      episodes:
+        description: "Number of episodes to run"
+        required: true
+        default: "5"
+      agent:
+        description: "Agent type"
+        required: true
+        default: "rule"
+        type: choice
+        options: [rule, gemini, groq]
+
+jobs:
+  run-docker:
+    name: Pull and run Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Pull Docker image
+        run: |
+          docker pull shima900/rl-web-env:latest
+          docker images shima900/rl-web-env
+
+      - name: Create results folder
+        run: mkdir -p results
+
+      - name: Run 52 tests inside Docker
+        run: |
+          docker run --rm \
+            shima900/rl-web-env:latest \
+            pytest tests/ -v --tb=short > results/test_results.txt 2>&1
+          cat results/test_results.txt
+
+      - name: Run RL agent inside Docker
+        run: |
+          docker run --rm \
+            -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+            -v ${{ github.workspace }}/results:/app/logs \
+            shima900/rl-web-env:latest \
+            python main.py \
+              --agent ${{ github.event.inputs.agent || 'rule' }} \
+              --episodes ${{ github.event.inputs.episodes || '5' }} \
+              --headless true \
+              --log-level INFO
+
+      - name: Show results
+        if: always()
+        run: |
+          cat results/results.json 2>/dev/null || echo "No results yet"
+          cat results/episodes.csv 2>/dev/null || echo "No CSV yet"
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-run-results-${{ github.run_number }}
+          path: |
+            results/results.json
+            results/episodes.csv
+            results/test_results.txt
+          retention-days: 30
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## Docker Image Run Results" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** shima900/rl-web-env:latest" >> $GITHUB_STEP_SUMMARY
+          echo "**Agent:** ${{ github.event.inputs.agent || 'rule' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Episodes:** ${{ github.event.inputs.episodes || '5' }}" >> $GITHUB_STEP_SUMMARY
+          if [ -f results/results.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat results/results.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
